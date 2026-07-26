@@ -1,6 +1,6 @@
 {
 	"name": "@bumpyclock/pi-codex-compat",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"description": "Pi extension consolidating OpenAI Codex fast mode, native compaction, named OAuth accounts, live quota, historical usage, and token throughput status.",
 	"type": "module",
 	"license": "MIT",
