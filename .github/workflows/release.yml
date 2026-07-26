@@ -1,0 +1,225 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Release package.json version or only validate package
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - release
+      version:
+        description: Optional version; must match package.json in release mode
+        required: false
+        type: string
+      target:
+        description: Branch or commit SHA used by manual runs
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Release quality
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.target || github.sha }}
+
+      - name: Pin validated source revision
+        id: candidate
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Format, lint, typecheck, tests
+        run: npm run check
+
+      - name: Package dry-run
+        run: npm run pack:dry
+
+      - name: Packed consumer Pi smoke
+        run: npm run smoke:pi
+
+      - name: Runtime audit (omit dev)
+        run: npm audit --omit=dev --audit-level=high
+
+  release-please:
+    name: Release Please
+    if: ${{ github.event_name == 'push' }}
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Create or update release pull request
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          release-type: node
+
+  manual-release:
+    name: Release package version
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' }}
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag_name: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out validated release candidate
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.quality.outputs.candidate_sha }}
+
+      - name: Resolve version from package.json
+        id: version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          if [ -n "${EXPECTED_VERSION}" ] && [ "${EXPECTED_VERSION}" != "${VERSION}" ]; then
+            echo "provided version ${EXPECTED_VERSION} does not match package.json version ${VERSION}"
+            exit 1
+          fi
+          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure release tag does not exist
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists."
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ needs.quality.outputs.candidate_sha }}
+          generate_release_notes: true
+
+  dry-run:
+    name: npm publish dry-run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run' }}
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out validated release candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.quality.outputs.candidate_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test npm publish without uploading
+        run: npm publish --dry-run --access public --provenance=false
+
+  publish:
+    name: Publish to npm
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.quality.result == 'success' &&
+        (
+          github.event_name == 'release' ||
+          (needs.release-please.result == 'success' && needs.release-please.outputs.release_created == 'true') ||
+          needs.manual-release.result == 'success'
+        )
+      }}
+    needs:
+      - quality
+      - release-please
+      - manual-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || needs.release-please.outputs.tag_name || needs.manual-release.outputs.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use npm with trusted publishing support
+        run: npm install --global npm@^11.15.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Revalidate immutable package source
+        run: |
+          npm run check
+          npm run pack:dry
+          npm run smoke:pi
+          npm audit --omit=dev --audit-level=high
+
+      - name: Publish package with provenance
+        env:
+          TAG: ${{ github.event.release.tag_name || needs.release-please.outputs.tag_name || needs.manual-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          PKG_NAME=$(node -e "console.log(require('./package.json').name)")
+          if [ "v${VERSION}" != "${TAG}" ]; then
+            echo "release tag ${TAG} does not match package version ${VERSION}"
+            exit 1
+          fi
+          EXISTING=$(npm view "${PKG_NAME}@${VERSION}" version 2>/dev/null || true)
+          if [ -n "${EXISTING}" ]; then
+            echo "Skipping ${PKG_NAME}@${VERSION} (already published)"
+          else
+            echo "Publishing ${PKG_NAME}@${VERSION}"
+            npm publish --provenance --access public
+          fi

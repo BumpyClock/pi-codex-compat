@@ -126,6 +126,12 @@ npm run pack:dry
 npm run smoke:pi
 ```
 
+## Releases
+
+Merges to `main` update a Release Please pull request. Merging that release pull request creates a GitHub release and publishes the matching package version through `.github/workflows/release.yml`.
+
+The workflow uses npm trusted publishing with GitHub Actions OIDC and provenance; it does not require a long-lived npm token. Manual runs default to a dry run. Choose `release` only when `package.json` contains the version to release.
+
 ## License
 
 MIT. See [LICENSE](./LICENSE) and [NOTICES.md](./NOTICES.md) for adapted upstream attribution (Jordy Van Domselaar; narumiruna).
