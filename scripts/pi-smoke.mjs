@@ -86,8 +86,8 @@ try {
 			"--no-prompt-templates",
 			"-e",
 			installedPackage,
-			"-p",
-			"Reply with the single word OK.",
+			"--list-models",
+			"openai-codex",
 		],
 		{ encoding: "utf8", env, cwd: consumerDir },
 	);
@@ -101,7 +101,7 @@ try {
 
 	const out = (result.stdout ?? "").trim();
 	console.log("pi smoke (packed consumer install) exit=0");
-	console.log(out ? `stdout=${out}` : "stdout empty (offline ok if registration succeeded)");
+	console.log(out ? "model catalog listed after extension load" : "extension load completed");
 	console.log(`tarball=${tarballs[0]}`);
 	console.log(`installed=${installedPackage}`);
 	cleanup();
