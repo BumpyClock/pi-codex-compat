@@ -1,0 +1,74 @@
+{
+	"name": "@bumpyclock/pi-codex-compat",
+	"version": "0.1.0",
+	"description": "Pi extension consolidating OpenAI Codex fast mode, native compaction, named OAuth accounts, live quota, historical usage, and token throughput status.",
+	"type": "module",
+	"license": "MIT",
+	"private": false,
+	"author": "Aditya Sharma",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"pi",
+		"openai",
+		"codex",
+		"compaction",
+		"accounts",
+		"oauth",
+		"quota",
+		"usage"
+	],
+	"files": [
+		"index.ts",
+		"src",
+		"README.md",
+		"LICENSE",
+		"NOTICES.md"
+	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"scripts": {
+		"check": "biome check . && npm run typecheck && npm test",
+		"format": "biome check --write .",
+		"lint": "biome lint .",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+		"test": "tsc -p tsconfig.test.json && node --test --test-force-exit 'dist-test/**/*.test.js'",
+		"pack:dry": "npm pack --dry-run --json",
+		"smoke:pi": "node ./scripts/pi-smoke.mjs"
+	},
+	"dependencies": {
+		"proper-lockfile": "^4.1.2"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-agent-core": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.5",
+		"@earendil-works/pi-agent-core": "0.82.1",
+		"@earendil-works/pi-ai": "0.82.1",
+		"@earendil-works/pi-coding-agent": "0.82.1",
+		"@types/node": "^24.10.1",
+		"@types/proper-lockfile": "^4.1.4",
+		"typescript": "5.9.3"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/BumpyClock/pi-codex-compat.git"
+	},
+	"bugs": {
+		"url": "https://github.com/BumpyClock/pi-codex-compat/issues"
+	},
+	"homepage": "https://github.com/BumpyClock/pi-codex-compat#readme"
+}

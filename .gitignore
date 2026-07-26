@@ -1,0 +1,7 @@
+node_modules/
+dist-test/
+coverage/
+*.tgz
+.DS_Store
+*.log
+.pi-subagents/
