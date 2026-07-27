@@ -88,9 +88,22 @@ Example:
   "tps": {
     "enabled": true,
     "notifyOnComplete": true
+  },
+  "auth": {
+    "disableApiKeyWhenCodexAuthenticated": false
   }
 }
 ```
+
+### Auth cost-safety policy
+
+`auth.disableApiKeyWhenCodexAuthenticated` (default `false`) is an opt-in guard:
+
+- When **on** and a Codex OAuth login exists (default Pi `openai-codex` OAuth in `auth.json`, or a named account selected by this extension), every exact provider `openai` model is hidden — including built-ins and `models.json` additions.
+- Stale sessions still selecting `openai` are blocked on each turn, compaction, and summarizing tree navigation. Non-summarizing tree navigation stays allowed.
+- `openai-codex` and unrelated providers are unchanged. The policy never auto-switches models and never mutates `OPENAI_API_KEY` or credential files.
+- When auth storage cannot be read, presence is treated as unknown and the policy fails closed while enabled.
+- Toggle from `/codex` → Settings. Status shows `Direct OpenAI API key: allowed|blocked while Codex is logged in`.
 
 ### Precedence
 
@@ -110,6 +123,8 @@ Legacy sources consulted when canonical values are absent:
 ## Security and failure behavior
 
 - Account activation failures fail closed for `openai-codex` (no silent fallback credential).
+- When `auth.disableApiKeyWhenCodexAuthenticated` is enabled, unknown/corrupt Codex auth storage fails closed for direct `openai` API-key use (hide/block with a redacted error).
+- The auth.json presence reader is extension-owned and read-only: it never creates or writes `auth.json`, and never logs token fields.
 - Compaction failures fail open to Pi's normal compaction.
 - Quota requests send credentials only to the official ChatGPT origin (`https://chatgpt.com`) and use bounded response reads.
 - Debug artifacts redact authorization headers, API keys, JWT-like values, and exact credential strings.

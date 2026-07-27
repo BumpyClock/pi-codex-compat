@@ -17,10 +17,15 @@ export type TpsSettings = {
 	notifyOnComplete: boolean;
 };
 
+export type AuthSettings = {
+	disableApiKeyWhenCodexAuthenticated: boolean;
+};
+
 export type PackageSettings = {
 	fastMode: FastModeSettings;
 	openaiNativeCompaction: CompactionSettings;
 	tps: TpsSettings;
+	auth: AuthSettings;
 };
 
 export type LoadedPackageSettings = {
@@ -40,4 +45,8 @@ export const DEFAULT_FAST_MODE: FastModeSettings = {
 export const DEFAULT_TPS: TpsSettings = {
 	enabled: true,
 	notifyOnComplete: true,
+};
+
+export const DEFAULT_AUTH: AuthSettings = {
+	disableApiKeyWhenCodexAuthenticated: false,
 };

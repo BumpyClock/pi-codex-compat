@@ -17,6 +17,7 @@ const disabledSettings = {
 		notifyOnLoad: false,
 	},
 	tps: { enabled: false, notifyOnComplete: false },
+	auth: { disableApiKeyWhenCodexAuthenticated: false },
 };
 
 function boot() {

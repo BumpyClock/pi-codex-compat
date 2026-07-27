@@ -15,8 +15,10 @@ import {
 	projectSettingsPath,
 } from "./paths.js";
 import {
+	type AuthSettings,
 	CANONICAL_SETTINGS_FILE,
 	COMPACTION_ENV_PREFIX,
+	DEFAULT_AUTH,
 	DEFAULT_FAST_MODE,
 	DEFAULT_TPS,
 	type FastModeSettings,
@@ -32,6 +34,7 @@ type PartialPackage = {
 	fastMode?: Partial<FastModeSettings>;
 	openaiNativeCompaction?: PartialCompaction;
 	tps?: Partial<TpsSettings>;
+	auth?: Partial<AuthSettings>;
 };
 
 const PACKAGE_ROOT = pathDirname(fileURLToPath(import.meta.url));
@@ -199,6 +202,22 @@ function readTpsBlock(raw: unknown, blockPath: string, warnings: string[]): Part
 	return result;
 }
 
+function readAuthBlock(raw: unknown, blockPath: string, warnings: string[]): Partial<AuthSettings> {
+	if (raw === undefined) return {};
+	if (!isRecord(raw)) {
+		warnings.push(`Ignoring ${blockPath}: expected an object.`);
+		return {};
+	}
+	const disableApiKeyWhenCodexAuthenticated = toBoolean(
+		raw.disableApiKeyWhenCodexAuthenticated,
+		`${blockPath}.disableApiKeyWhenCodexAuthenticated`,
+		warnings,
+	);
+	return disableApiKeyWhenCodexAuthenticated === undefined
+		? {}
+		: { disableApiKeyWhenCodexAuthenticated };
+}
+
 function readCanonicalPackage(
 	settings: Record<string, unknown> | undefined,
 	settingsPath: string,
@@ -216,6 +235,7 @@ function readCanonicalPackage(
 			warnings,
 		),
 		tps: readTpsBlock(settings.tps, `${settingsPath}.tps`, warnings),
+		auth: readAuthBlock(settings.auth, `${settingsPath}.auth`, warnings),
 	};
 }
 
@@ -227,6 +247,7 @@ function mergePartial(base: PackageSettings, patch: PartialPackage): PackageSett
 			...patch.openaiNativeCompaction,
 		},
 		tps: { ...base.tps, ...patch.tps },
+		auth: { ...base.auth, ...patch.auth },
 	};
 }
 
@@ -245,6 +266,9 @@ function mergePartials(...patches: PartialPackage[]): PartialPackage {
 		if (patch.tps && Object.keys(patch.tps).length > 0) {
 			result.tps = { ...result.tps, ...patch.tps };
 		}
+		if (patch.auth && Object.keys(patch.auth).length > 0) {
+			result.auth = { ...result.auth, ...patch.auth };
+		}
 	}
 	return result;
 }
@@ -253,7 +277,8 @@ function hasPartial(patch: PartialPackage): boolean {
 	return (
 		Object.keys(patch.fastMode ?? {}).length > 0 ||
 		Object.keys(patch.openaiNativeCompaction ?? {}).length > 0 ||
-		Object.keys(patch.tps ?? {}).length > 0
+		Object.keys(patch.tps ?? {}).length > 0 ||
+		Object.keys(patch.auth ?? {}).length > 0
 	);
 }
 
@@ -322,6 +347,7 @@ function recognizedCanonicalShape(settings: PackageSettings): Record<string, unk
 		fastMode: settings.fastMode,
 		openaiNativeCompaction: recognizedCompactionShape(settings.openaiNativeCompaction),
 		tps: settings.tps,
+		auth: settings.auth,
 	};
 }
 
@@ -372,6 +398,8 @@ function fieldLevelMigration(
 		};
 	}
 
+	// auth has no legacy migration path.
+
 	return Object.keys(result).length > 0 ? result : undefined;
 }
 
@@ -399,6 +427,15 @@ function packageSettingsDelta(before: PackageSettings, after: PackageSettings): 
 		tpsPatch.notifyOnComplete = after.tps.notifyOnComplete;
 	}
 	if (Object.keys(tpsPatch).length > 0) patch.tps = tpsPatch;
+
+	const authPatch: Partial<AuthSettings> = {};
+	if (
+		before.auth.disableApiKeyWhenCodexAuthenticated !==
+		after.auth.disableApiKeyWhenCodexAuthenticated
+	) {
+		authPatch.disableApiKeyWhenCodexAuthenticated = after.auth.disableApiKeyWhenCodexAuthenticated;
+	}
+	if (Object.keys(authPatch).length > 0) patch.auth = authPatch;
 	return patch;
 }
 
@@ -420,6 +457,10 @@ function applyPartialToExistingFile(
 	if (patch.tps && Object.keys(patch.tps).length > 0) {
 		const current = isRecord(existing.tps) ? existing.tps : {};
 		next.tps = { ...current, ...patch.tps };
+	}
+	if (patch.auth && Object.keys(patch.auth).length > 0) {
+		const current = isRecord(existing.auth) ? existing.auth : {};
+		next.auth = { ...current, ...patch.auth };
 	}
 	return next;
 }
@@ -468,6 +509,7 @@ export function loadPackageSettings(
 		fastMode: { ...DEFAULT_FAST_MODE },
 		openaiNativeCompaction: { ...DEFAULT_EXTENSION_SETTINGS },
 		tps: { ...DEFAULT_TPS },
+		auth: { ...DEFAULT_AUTH },
 	};
 
 	// Track scope-pure legacy contributions for migrations (never env, never cross-scope).

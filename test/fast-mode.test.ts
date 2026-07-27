@@ -148,6 +148,7 @@ test("before_provider_request pipeline applies compaction then priority tier", a
 			notifyOnLoad: false,
 		},
 		tps: { enabled: false, notifyOnComplete: false },
+		auth: { disableApiKeyWhenCodexAuthenticated: false },
 	};
 	piCodexCompat(pi, { settings: fastSettings });
 
@@ -186,6 +187,7 @@ test("before_provider_request does not inject tier for openai Responses codex-na
 				notifyOnLoad: false,
 			},
 			tps: { enabled: false, notifyOnComplete: false },
+			auth: { disableApiKeyWhenCodexAuthenticated: false },
 		},
 	});
 
@@ -222,6 +224,7 @@ test("/fast rejects print mode", async () => {
 				notifyOnLoad: false,
 			},
 			tps: { enabled: false, notifyOnComplete: false },
+			auth: { disableApiKeyWhenCodexAuthenticated: false },
 		},
 	});
 	const command = commands.get("fast");

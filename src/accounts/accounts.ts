@@ -14,6 +14,12 @@ import {
 	type StoredOAuthCredential,
 } from "./account-store.js";
 import {
+	type CodexAuthStateReader,
+	createCodexAuthStateReader,
+	type NamedCodexAccountSelection,
+	type RedactedCodexAuthState,
+} from "./codex-auth-state.js";
+import {
 	type AccountProviderAdapter,
 	type AccountProviderId,
 	createBuiltinProviderAdapters,
@@ -39,6 +45,18 @@ export {
 	parseAccountsData,
 	type StoredOAuthCredential,
 } from "./account-store.js";
+export {
+	type AuthJsonOAuthPresence,
+	inspectAuthJsonContents,
+	readOpenAICodexOAuthPresence,
+} from "./auth-json-presence.js";
+export {
+	type CodexAuthStateReader,
+	createCodexAuthStateReader,
+	isCodexAuthBlockingState,
+	type NamedCodexAccountSelection,
+	type RedactedCodexAuthState,
+} from "./codex-auth-state.js";
 
 export const ACCOUNTS_STATUS_KEY = "accounts";
 export const FAIL_CLOSED_API_KEY = RUNTIME_FAIL_CLOSED_API_KEY;
@@ -49,10 +67,17 @@ export type AccountsDependencies = {
 	providers?: readonly AccountProviderAdapter[];
 	closeCodexWebSockets?: (sessionId?: string) => unknown | Promise<unknown>;
 	registerCommand?: boolean;
+	authPath?: string;
+	/** Fired after named-account login/switch/remove/logout activation attempts. */
+	onAuthChanged?: (ctx: ExtensionContext) => void | Promise<void>;
 };
 
 export type AccountsApi = {
 	openMenu: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+	/** Redacted Codex OAuth presence for the auth-policy controller. */
+	getCodexAuthState: () => Promise<RedactedCodexAuthState>;
+	/** Force-sync all account providers (used by factory lifecycle ordering). */
+	synchronize: (ctx: ExtensionContext) => Promise<void>;
 };
 
 export default function accountsExtension(
@@ -74,6 +99,14 @@ export default function accountsExtension(
 	const appliedIdentities = new Map<AccountProviderId, string>();
 	const abortProviders = new Set<AccountProviderId>();
 	const syncTasks = new Map<AccountProviderId, Promise<EnsureActiveProviderAuthResult>>();
+	const codexAuthStateReader: CodexAuthStateReader = createCodexAuthStateReader({
+		authPath: dependencies.authPath,
+		readNamedSelection: () => readNamedCodexSelection(store),
+	});
+	const notifyAuthChanged = async (ctx: ExtensionContext): Promise<void> => {
+		if (!dependencies.onAuthChanged) return;
+		await dependencies.onAuthChanged(ctx);
+	};
 
 	const syncProvider = (
 		providerId: AccountProviderId,
@@ -138,7 +171,7 @@ export default function accountsExtension(
 		updateStatus(ctx, results);
 	};
 
-	const accountCommand = createAccountCommand(pi, store, adapters, syncProvider);
+	const accountCommand = createAccountCommand(pi, store, adapters, syncProvider, notifyAuthChanged);
 	const openMenu = async (args: string, ctx: ExtensionCommandContext) => {
 		if (guardTuiOnlyMenu("/accounts", ctx) === "stop") return;
 		await accountCommand.handler(args, ctx);
@@ -207,7 +240,11 @@ export default function accountsExtension(
 		setStatus(ctx, undefined);
 	});
 
-	return { openMenu };
+	return {
+		openMenu,
+		getCodexAuthState: () => codexAuthStateReader.read(),
+		synchronize: syncAll,
+	};
 }
 
 function createAccountCommand(
@@ -218,13 +255,31 @@ function createAccountCommand(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ) {
 	return {
 		description: "Open the interactive subscription account manager",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			await showAccountsMenu(pi, ctx, store, adapters, syncProvider);
+			await showAccountsMenu(pi, ctx, store, adapters, syncProvider, onAuthChanged);
 		},
 	};
+}
+
+async function readNamedCodexSelection(store: AccountStore): Promise<NamedCodexAccountSelection> {
+	try {
+		const state = await store.readProviderAsync("openai-codex");
+		if (state.active) return { status: "selected", accountName: state.active };
+		return { status: "absent" };
+	} catch (error) {
+		return {
+			status: "unknown",
+			message:
+				`Named Codex account store could not be read: ${error instanceof Error ? error.message : String(error)}`.replace(
+					/Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+					"Bearer <redacted>",
+				),
+		};
+	}
 }
 
 const LOGIN_ACTION = "Login new account";
@@ -248,6 +303,7 @@ async function showAccountsMenu(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("/accounts requires interactive UI.", "error");
@@ -263,22 +319,24 @@ async function showAccountsMenu(
 	);
 	if (!action) return;
 	if (action === LOGIN_ACTION) {
-		await showLoginAccount(pi, ctx, store, adapters, syncProvider);
+		await showLoginAccount(pi, ctx, store, adapters, syncProvider, onAuthChanged);
 		return;
 	}
 	if (action === REMOVE_ACTION) {
-		await showRemoveAccount(ctx, store, adapters, syncProvider);
+		await showRemoveAccount(ctx, store, adapters, syncProvider, onAuthChanged);
 		return;
 	}
 	if (currentState && action === switchCurrentProviderAction(currentState.adapter)) {
-		await showSwitchProviderAccount(ctx, store, currentState.adapter, syncProvider);
+		await showSwitchProviderAccount(ctx, store, currentState.adapter, syncProvider, onAuthChanged);
 		return;
 	}
 	if (action === SWITCH_ANOTHER_PROVIDER_ACTION || action === SWITCH_PROVIDER_ACTION) {
 		const excludeProviderId =
 			action === SWITCH_ANOTHER_PROVIDER_ACTION ? currentProviderId : undefined;
 		const provider = await selectProviderWithAccounts(ctx, states, excludeProviderId);
-		if (provider) await showSwitchProviderAccount(ctx, store, provider.adapter, syncProvider);
+		if (provider) {
+			await showSwitchProviderAccount(ctx, store, provider.adapter, syncProvider, onAuthChanged);
+		}
 	}
 }
 
@@ -366,6 +424,7 @@ async function showLoginAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	const adapter = await selectProvider(
 		ctx,
@@ -374,7 +433,7 @@ async function showLoginAccount(
 	if (!adapter) return;
 	const name = await ctx.ui.input(`Name this ${adapter.displayName} account:`, "work");
 	if (name === undefined) return;
-	await loginAccount(pi, ctx, store, adapter, name, syncProvider);
+	await loginAccount(pi, ctx, store, adapter, name, syncProvider, onAuthChanged);
 }
 
 async function showSwitchProviderAccount(
@@ -385,6 +444,7 @@ async function showSwitchProviderAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	const state = await store.readProviderAsync(adapter.id);
 	const options = switchAccountOptions(state.active, Object.keys(state.accounts));
@@ -399,7 +459,7 @@ async function showSwitchProviderAccount(
 		ctx.ui.notify(`${adapter.displayName} account "${accountName}" is already active.`, "info");
 		return;
 	}
-	await switchAccount(ctx, store, adapter, accountName, syncProvider);
+	await switchAccount(ctx, store, adapter, accountName, syncProvider, onAuthChanged);
 }
 
 async function selectProviderWithAccounts(
@@ -429,6 +489,7 @@ async function showRemoveAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	const states = await readProviderMenuStates(store, adapters);
 	const options = removeAccountOptions(states, toProviderId(ctx.model?.provider));
@@ -447,7 +508,7 @@ async function showRemoveAccount(
 		`Remove ${option.adapter.displayName} account "${option.accountName}"?`,
 	);
 	if (!confirmed) return;
-	await removeAccount(ctx, store, option.adapter, option.accountName, syncProvider);
+	await removeAccount(ctx, store, option.adapter, option.accountName, syncProvider, onAuthChanged);
 }
 
 function sortedProviderStates(
@@ -533,6 +594,7 @@ async function loginAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	const parsed = parseAccountName(nameArg);
 	if (!parsed.ok) return ctx.ui.notify(parsed.error, "warning");
@@ -564,6 +626,7 @@ async function loginAccount(
 		}));
 		const result = await syncProvider(adapter.id, ctx);
 		await selectDefaultModelIfUnknown(pi, ctx, adapter);
+		await onAuthChanged(ctx);
 		ctx.ui.notify(
 			formatActivationMessage("Logged in", adapter, parsed.name, result),
 			result.status === "active" ? "info" : "error",
@@ -585,6 +648,7 @@ async function switchAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	let name = nameArg.trim();
 	if (!name) {
@@ -607,6 +671,7 @@ async function switchAccount(
 	if (isDefaultPiLoginArg(name)) {
 		await store.updateProvider(adapter.id, (state) => ({ ...state, active: undefined }));
 		const result = await syncProvider(adapter.id, ctx);
+		await onAuthChanged(ctx);
 		if (result.status === "error") {
 			ctx.ui.notify(
 				`Could not restore default Pi ${adapter.displayName} login; requests will fail closed: ${result.message}`,
@@ -630,6 +695,7 @@ async function switchAccount(
 		return;
 	}
 	const result = await syncProvider(adapter.id, ctx);
+	await onAuthChanged(ctx);
 	ctx.ui.notify(
 		formatActivationMessage("Activated", adapter, parsed.name, result),
 		result.status === "active" ? "info" : "error",
@@ -645,6 +711,7 @@ async function removeAccount(
 		providerId: AccountProviderId,
 		ctx: ExtensionContext,
 	) => Promise<EnsureActiveProviderAuthResult>,
+	onAuthChanged: (ctx: ExtensionContext) => Promise<void>,
 ): Promise<void> {
 	const parsed = parseAccountName(nameArg);
 	if (!parsed.ok) return ctx.ui.notify(parsed.error, "warning");
@@ -664,6 +731,7 @@ async function removeAccount(
 	}
 	if (removedActive) {
 		const result = await syncProvider(adapter.id, ctx);
+		await onAuthChanged(ctx);
 		if (result.status === "error") {
 			ctx.ui.notify(
 				`Removed ${adapter.displayName} account "${parsed.name}", but default auth restoration failed closed: ${result.message}`,
@@ -671,6 +739,8 @@ async function removeAccount(
 			);
 			return;
 		}
+	} else {
+		await onAuthChanged(ctx);
 	}
 	ctx.ui.notify(`Removed ${adapter.displayName} account "${parsed.name}".`, "info");
 }

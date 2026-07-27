@@ -24,7 +24,7 @@ type MockPiApi = {
 	registerShortcut(name: string, shortcut: unknown): void;
 	registerFlag(name: string, flag: unknown): void;
 	registerTool(tool: unknown): void;
-	registerProvider(name: string, config: unknown): void;
+	registerProvider(nameOrProvider: string | { id: string }, config?: unknown): void;
 	unregisterProvider(name: string): void;
 	on(name: string, handler: MockHandler): void;
 	events: {
@@ -58,6 +58,7 @@ export function createMockPi(
 	const events = new Map<string, MockHandler[]>();
 	const tools: MockTool[] = [];
 	const providers = new Map<string, unknown>();
+	const nativeProviders = new Map<string, unknown>();
 	const providerRegistrations: Array<{ name: string; config: unknown }> = [];
 	const providerUnregistrations: string[] = [];
 	const entries: Array<{ customType: string; data: unknown }> = [];
@@ -109,7 +110,16 @@ export function createMockPi(
 		registerTool(tool: unknown) {
 			tools.push(tool as MockTool);
 		},
-		registerProvider(name: string, config: unknown) {
+		registerProvider(nameOrProvider: string | { id: string }, config?: unknown) {
+			if (typeof nameOrProvider !== "string") {
+				const provider = nameOrProvider;
+				nativeProviders.set(provider.id, provider);
+				providers.delete(provider.id);
+				providerRegistrations.push({ name: provider.id, config: provider });
+				return;
+			}
+			const name = nameOrProvider;
+			nativeProviders.delete(name);
 			const previous = providers.get(name);
 			const effective =
 				previous &&
@@ -125,6 +135,7 @@ export function createMockPi(
 		},
 		unregisterProvider(name: string) {
 			providers.delete(name);
+			nativeProviders.delete(name);
 			providerUnregistrations.push(name);
 		},
 		on(name: string, handler: MockHandler) {
@@ -165,6 +176,24 @@ export function createMockPi(
 		events: eventBus,
 	};
 
+	const modelRegistry = {
+		getRegisteredProviderConfig(providerName: string) {
+			return providers.get(providerName);
+		},
+		getRegisteredNativeProvider(providerName: string) {
+			return nativeProviders.get(providerName);
+		},
+		getAll() {
+			return [];
+		},
+		getAvailable() {
+			return [];
+		},
+		find() {
+			return undefined;
+		},
+	};
+
 	return {
 		pi: rawPi as never,
 		rawPi,
@@ -175,6 +204,8 @@ export function createMockPi(
 		eventBus,
 		tools,
 		providers,
+		nativeProviders,
+		modelRegistry,
 		providerRegistrations,
 		providerUnregistrations,
 		entries,
@@ -253,6 +284,8 @@ export function createMockContext(overrides: Record<string, unknown> = {}) {
 			getProviderDisplayName: (id: string) => id,
 			getAvailable: () => [],
 			getAll: () => [],
+			getRegisteredProviderConfig: () => undefined,
+			getRegisteredNativeProvider: () => undefined,
 		},
 		getSystemPrompt: overrides.getSystemPrompt ?? (() => "system"),
 		signal: overrides.signal ?? new AbortController().signal,

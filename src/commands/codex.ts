@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { formatAuthPolicySetting, formatDirectOpenAIStatus } from "../auth-policy/messages.js";
 import type { FastModeController } from "../fast-mode/fast-mode.js";
 import { updatePackageSettings } from "../settings/load.js";
 import type { PackageSettings } from "../settings/types.js";
@@ -11,6 +12,10 @@ export type CodexCommandDeps = {
 	openAccountsMenu: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	openQuotaMenu: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	refreshSettings?: (ctx?: ExtensionCommandContext) => PackageSettings;
+	getAuthPolicyStatusLine?: () => string;
+	/** Fresh reconcile before status so default /login/logout is visible. */
+	reconcileAuthPolicy?: (ctx: ExtensionCommandContext) => void | Promise<void>;
+	onSettingsChanged?: (ctx: ExtensionCommandContext) => void | Promise<void>;
 };
 
 const HELP_TEXT = [
@@ -23,16 +28,34 @@ const HELP_TEXT = [
 	"  /usage-history      Historical Pi/Codex CLI cost report (TUI/RPC)",
 	"  /fast [toggle|on|off|status]  Priority service tier (TUI/RPC)",
 	"  Alt+Shift+F         Toggle fast mode",
+	"",
+	"Settings:",
+	"  auth.disableApiKeyWhenCodexAuthenticated  When on and Codex OAuth is present,",
+	"    hide direct openai API-key models and block stale openai selections.",
 ].join("\n");
 
-function formatStatus(settings: PackageSettings, fastEnabled: boolean): string {
+function formatStatus(settings: PackageSettings, fastEnabled: boolean, authLine?: string): string {
 	return [
 		"pi-codex-compat status",
 		`  fast mode: ${fastEnabled ? "on" : "off"}`,
 		`  native compaction: ${settings.openaiNativeCompaction.enabled ? "enabled" : "disabled"}`,
 		`  tps: ${settings.tps.enabled ? "enabled" : "disabled"}`,
 		`  tps notify: ${settings.tps.notifyOnComplete ? "on" : "off"}`,
+		`  ${authLine ?? formatDirectOpenAIStatus(false)}`,
+		`  ${formatAuthPolicySetting(settings.auth.disableApiKeyWhenCodexAuthenticated)}`,
 	].join("\n");
+}
+
+async function showFreshStatus(
+	ctx: ExtensionCommandContext,
+	deps: CodexCommandDeps,
+	settings: PackageSettings,
+): Promise<void> {
+	await deps.reconcileAuthPolicy?.(ctx);
+	ctx.ui.notify(
+		formatStatus(settings, deps.fastMode.isEnabled(), deps.getAuthPolicyStatusLine?.()),
+		"info",
+	);
 }
 
 export function registerCodexCommand(pi: ExtensionAPI, deps: CodexCommandDeps): void {
@@ -54,7 +77,7 @@ export function registerCodexCommand(pi: ExtensionAPI, deps: CodexCommandDeps): 
 			}
 			if (action === "status") {
 				if (guardObservableCommand("/codex status", ctx) === "stop") return;
-				ctx.ui.notify(formatStatus(deps.getSettings(), deps.fastMode.isEnabled()), "info");
+				await showFreshStatus(ctx, deps, deps.getSettings());
 				return;
 			}
 			if (action === "help") {
@@ -118,7 +141,7 @@ async function showCodexMenu(
 		return;
 	}
 	if (choice === "Status") {
-		ctx.ui.notify(formatStatus(settings, deps.fastMode.isEnabled()), "info");
+		await showFreshStatus(ctx, deps, settings);
 		return;
 	}
 	if (choice === "Help") {
@@ -135,6 +158,7 @@ async function showSettingsMenu(
 		`Native compaction: ${settings.openaiNativeCompaction.enabled ? "on" : "off"}`,
 		`TPS status: ${settings.tps.enabled ? "on" : "off"}`,
 		`TPS completion notify: ${settings.tps.notifyOnComplete ? "on" : "off"}`,
+		formatAuthPolicySetting(settings.auth.disableApiKeyWhenCodexAuthenticated),
 		"Back",
 	]);
 	if (!choice || choice === "Back") return;
@@ -183,6 +207,37 @@ async function showSettingsMenu(
 		deps.refreshSettings?.(ctx);
 		ctx.ui.notify(
 			`TPS completion notify ${next.tps.notifyOnComplete ? "enabled" : "disabled"}.`,
+			"info",
+		);
+		return;
+	}
+	if (choice.startsWith("Block OpenAI API key")) {
+		const previousEffective = settings.auth.disableApiKeyWhenCodexAuthenticated;
+		// updatePackageSettings still writes only the user-layer delta (existing contract).
+		await updatePackageSettings(
+			(current) => ({
+				...current,
+				auth: {
+					...current.auth,
+					disableApiKeyWhenCodexAuthenticated: !current.auth.disableApiKeyWhenCodexAuthenticated,
+				},
+			}),
+			ctx.cwd,
+			{ isProjectTrusted: ctx.isProjectTrusted() },
+		);
+		// Reload effective settings: trusted project overrides may keep the prior value.
+		const effective = deps.refreshSettings?.(ctx) ?? deps.getSettings();
+		await deps.onSettingsChanged?.(ctx);
+		const effectiveOn = effective.auth.disableApiKeyWhenCodexAuthenticated;
+		if (effectiveOn === previousEffective) {
+			ctx.ui.notify(
+				`Block OpenAI API key when Codex logged in stays ${effectiveOn ? "on" : "off"} (trusted project override). User setting was written; effective value unchanged.`,
+				"warning",
+			);
+			return;
+		}
+		ctx.ui.notify(
+			`Block OpenAI API key when Codex logged in is ${effectiveOn ? "on" : "off"}.`,
 			"info",
 		);
 	}
