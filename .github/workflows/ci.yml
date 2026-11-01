@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    runs-on: boat
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

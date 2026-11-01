@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+head=$(git rev-parse HEAD)
+zero=${head//?/0}
+seen=false
+update=false
+while read -r local_ref local_sha remote_ref remote_sha extra; do
+    seen=true
+    if [[ -z "$local_ref" || -z "$remote_ref" || -n "${extra:-}" || ${#local_sha} != ${#head} || ${#remote_sha} != ${#head} || "$local_sha$remote_sha" == *[!0-9a-f]* ]]; then
+        echo 'pre-push: malformed ref record; refusing to skip checks.' >&2
+        exit 1
+    fi
+    [[ "$local_sha" == "$zero" ]] && continue
+    update=true
+    if [[ "$(git rev-parse --verify "$local_sha^{commit}")" != "$head" ]]; then
+        echo 'pre-push: switch to the pushed commit in a clean checkout first; only HEAD can be checked.' >&2
+        exit 1
+    fi
+done
+[[ "$seen" == true && "$update" == false ]] && exit 0
+
+status=$(git status --porcelain --untracked-files=normal)
+if [[ -n "$status" ]]; then
+    echo 'pre-push: commit or move unrelated working-tree changes first. Nothing is stashed automatically.' >&2
+    exit 1
+fi
+if ! command -v node >/dev/null || ! command -v npm >/dev/null || [[ ! -x node_modules/.bin/biome || ! -x node_modules/.bin/tsc ]]; then
+    echo 'pre-push: prepare Node 24 and run npm ci before pushing. No tools are downloaded by this hook.' >&2
+    exit 1
+fi
+if [[ "$(node -p 'process.versions.node.split(".")[0]')" != 24 ]]; then
+    echo 'pre-push: use Node 24, matching CI.' >&2
+    exit 1
+fi
+
+# Full scope deliberately covers config/lock changes, unknown bases, renames,
+# new branches, empty diffs and every ref without relying on an affected graph.
+./node_modules/.bin/biome check .
+npm run typecheck
