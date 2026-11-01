@@ -35,7 +35,7 @@ concurrency:
 jobs:
   quality:
     name: Release quality
-    runs-on: ubuntu-latest
+    runs-on: boat
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.sha }}
     steps:
@@ -73,7 +73,7 @@ jobs:
     name: Release Please
     if: ${{ github.event_name == 'push' }}
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: boat
     permissions:
       contents: write
       pull-requests: write
@@ -91,7 +91,7 @@ jobs:
     name: Release package version
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' }}
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: boat
     permissions:
       contents: write
     outputs:
@@ -138,7 +138,7 @@ jobs:
     name: npm publish dry-run
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run' }}
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: boat
     steps:
       - name: Check out validated release candidate
         uses: actions/checkout@v6
@@ -177,6 +177,7 @@ jobs:
       - quality
       - release-please
       - manual-release
+    # Tokenless npm trusted publishing requires a GitHub-hosted runner.
     runs-on: ubuntu-latest
     permissions:
       contents: read
