@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/BumpyClock/pi-codex-compat/compare/v0.2.0...v0.3.0) (2026-11-04)
+
+
+### Features
+
+* **speed:** add opt-in Ultrafast service tier ([#5](https://github.com/BumpyClock/pi-codex-compat/issues/5)) ([0bdde54](https://github.com/BumpyClock/pi-codex-compat/commit/0bdde5406be421a6742b60cd040c6b603c9cecc1))
+
 ## [0.2.0](https://github.com/BumpyClock/pi-codex-compat/compare/v0.1.1...v0.2.0) (2026-07-27)
 
 
