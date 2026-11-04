@@ -150,11 +150,6 @@ export function registerFastMode(
 	options: { cwd?: string } = {},
 ): ChangeSpeedMode {
 	const changeMode: ChangeSpeedMode = async (ctx, mode) => {
-		if (mode === controller.getMode()) {
-			controller.updateStatus(ctx);
-			ctx.ui.notify(controller.statusText(ctx.model), "info");
-			return;
-		}
 		if (mode === "ultrafast" && !isUltrafastModel(ctx.model)) {
 			ctx.ui.notify(
 				`Ultrafast requires ${ULTRAFAST_MODELS.join(" or ")} on OpenAI Responses or Codex Responses. Speed mode unchanged.`,
@@ -162,7 +157,7 @@ export function registerFastMode(
 			);
 			return;
 		}
-		if (mode === "ultrafast") {
+		if (mode === "ultrafast" && controller.getMode() !== "ultrafast") {
 			ctx.ui.notify(ULTRAFAST_COST_WARNING, "warning");
 		}
 		try {
@@ -197,7 +192,10 @@ export function registerFastMode(
 				if (guardObservableCommand(`/${name}`, ctx) === "stop") return;
 				const action = args.trim().toLowerCase() || "toggle";
 				const current = controller.getMode();
-				if (action === "status") {
+				if (
+					action === "status" ||
+					(action === "off" && current !== "standard" && current !== target)
+				) {
 					controller.updateStatus(ctx);
 					ctx.ui.notify(controller.statusText(ctx.model), "info");
 					return;

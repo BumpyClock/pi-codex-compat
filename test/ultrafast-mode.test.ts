@@ -289,6 +289,40 @@ for (const [initial, command, action, expected] of [
 	});
 }
 
+for (const [userMode, projectMode, command, action, expectedUserMode] of [
+	["ultrafast", "fast", "fast", "on", "fast"],
+	["fast", "ultrafast", "ultrafast", "on", "ultrafast"],
+	["ultrafast", "standard", "fast", "off", "standard"],
+	["ultrafast", "standard", "ultrafast", "off", "standard"],
+	["ultrafast", "standard", "utrafast", "off", "standard"],
+	["ultrafast", "fast", "ultrafast", "off", "ultrafast"],
+	["fast", "ultrafast", "fast", "off", "fast"],
+] as const) {
+	regression(
+		`${userMode} user with ${projectMode} project: /${command} ${action} saves ${expectedUserMode}`,
+		async (f) => {
+			await f.seed(selections[userMode]);
+			await mkdir(join(f.cwd, ".pi"));
+			await writeFile(
+				join(f.cwd, ".pi", "pi-codex-compat.json"),
+				JSON.stringify({ fastMode: selections[projectMode] }),
+			);
+			const app = f.boot(undefined, { isProjectTrusted: () => true });
+			await app.emit("session_start");
+			const tier = (mode: SpeedMode) =>
+				mode === "standard" ? undefined : mode === "fast" ? "priority" : "ultrafast";
+			assert.equal((await app.request()).service_tier, tier(projectMode));
+			await app.command(command, action);
+			const saved = await f.saved();
+			assert.equal(saved.fastMode.enabled, expectedUserMode !== "standard");
+			assert.equal(saved.fastMode.tier, tier(expectedUserMode) ?? "priority");
+			const outsideProject = f.boot();
+			await outsideProject.emit("session_start");
+			assert.equal((await outsideProject.request()).service_tier, tier(expectedUserMode));
+		},
+	);
+}
+
 regression(
 	"controller exposes one mode and waits for persistence before changing it",
 	async (f) => {
