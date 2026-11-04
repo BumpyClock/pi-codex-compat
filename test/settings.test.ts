@@ -322,6 +322,104 @@ test("updateFastModeSetting does not seed project compaction into user config", 
 	}
 });
 
+test("fast-mode tier validates at the settings boundary and defaults to priority", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-codex-tier-"));
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir);
+	for (const [tier, expected, invalid] of [
+		[undefined, "priority", false],
+		["priority", "priority", false],
+		["ultrafast", "ultrafast", false],
+		["fast", "priority", true],
+		[true, "priority", true],
+		[null, "priority", true],
+	] as const) {
+		writeFileSync(
+			join(agentDir, "pi-codex-compat.json"),
+			JSON.stringify({ fastMode: { enabled: true, tier } }),
+		);
+		const loaded = loadPackageSettings(root, { agentDirOverride: agentDir });
+		assert.deepEqual(loaded.settings.fastMode, { enabled: true, tier: expected });
+		assert.equal(
+			loaded.warnings.some((warning) => warning.includes("fastMode.tier")),
+			invalid,
+		);
+	}
+});
+
+test("Ultrafast settings honor project trust and preserve canonical tier during legacy migration", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-codex-tier-trust-"));
+	const agentDir = join(root, "agent");
+	const cwd = join(root, "project");
+	mkdirSync(agentDir);
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ extensionSettings: { openaiCodexFastMode: { enabled: true } } }),
+	);
+	writeFileSync(
+		join(agentDir, "pi-codex-compat.json"),
+		JSON.stringify({ fastMode: { tier: "ultrafast" } }),
+	);
+	writeFileSync(
+		join(cwd, ".pi", "pi-codex-compat.json"),
+		JSON.stringify({ fastMode: { tier: "priority" } }),
+	);
+	const untrusted = loadPackageSettings(cwd, { agentDirOverride: agentDir });
+	assert.deepEqual(untrusted.settings.fastMode, { enabled: true, tier: "ultrafast" });
+	assert.deepEqual(untrusted.pendingUserMigration?.fastMode, {
+		enabled: true,
+		tier: "ultrafast",
+	});
+	const trusted = loadPackageSettings(cwd, {
+		agentDirOverride: agentDir,
+		isProjectTrusted: true,
+	});
+	assert.deepEqual(trusted.settings.fastMode, { enabled: true, tier: "priority" });
+	assert.deepEqual(trusted.pendingUserMigration, untrusted.pendingUserMigration);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await persistCanonicalMigrations(trusted, cwd);
+		assert.deepEqual(loadPackageSettings(cwd, { agentDirOverride: agentDir }).settings.fastMode, {
+			enabled: true,
+			tier: "ultrafast",
+		});
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+});
+
+test("tier-only settings writes preserve unrelated values without seeding project settings", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-codex-tier-write-"));
+	const agentDir = join(root, "agent");
+	const cwd = join(root, "project");
+	mkdirSync(agentDir);
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	const userPath = join(agentDir, "pi-codex-compat.json");
+	writeFileSync(userPath, JSON.stringify({ fastMode: { enabled: true, custom: "kept" } }));
+	writeFileSync(
+		join(cwd, ".pi", "pi-codex-compat.json"),
+		JSON.stringify({ openaiNativeCompaction: { debug: true }, tps: { enabled: false } }),
+	);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await updatePackageSettings(
+			(current) => ({ ...current, fastMode: { ...current.fastMode, tier: "ultrafast" } }),
+			cwd,
+			{ isProjectTrusted: true },
+		);
+		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), {
+			fastMode: { enabled: true, tier: "ultrafast", custom: "kept" },
+		});
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+});
+
 test("updatePackageSettings writes only changed fields to user config", async () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-codex-update-pkg-"));
 	const agentDir = join(root, "agent");
