@@ -22,6 +22,7 @@ import {
 	DEFAULT_FAST_MODE,
 	DEFAULT_TPS,
 	type FastModeSettings,
+	type FastServiceTier,
 	LEGACY_COMPACTION_KEY,
 	LEGACY_FAST_MODE_KEY,
 	type LoadedPackageSettings,
@@ -180,8 +181,15 @@ function readFastModeBlock(
 		warnings.push(`Ignoring ${blockPath}: expected an object.`);
 		return {};
 	}
+	const result: Partial<FastModeSettings> = {};
 	const enabled = toBoolean(raw.enabled, `${blockPath}.enabled`, warnings);
-	return enabled === undefined ? {} : { enabled };
+	if (enabled !== undefined) result.enabled = enabled;
+	if (raw.tier === "priority" || raw.tier === "ultrafast") {
+		result.tier = raw.tier;
+	} else if (raw.tier !== undefined) {
+		warnings.push(`Ignoring ${blockPath}.tier: expected "priority" or "ultrafast".`);
+	}
+	return result;
 }
 
 function readTpsBlock(raw: unknown, blockPath: string, warnings: string[]): Partial<TpsSettings> {
@@ -362,7 +370,7 @@ function fieldLevelMigration(
 	const result: Record<string, unknown> = {};
 
 	if (legacy.fastMode?.enabled !== undefined && canonical.fastMode?.enabled === undefined) {
-		result.fastMode = { enabled: legacy.fastMode.enabled };
+		result.fastMode = { ...canonical.fastMode, enabled: legacy.fastMode.enabled };
 	}
 
 	const compactionLegacy = legacy.openaiNativeCompaction ?? {};
@@ -405,9 +413,14 @@ function fieldLevelMigration(
 
 function packageSettingsDelta(before: PackageSettings, after: PackageSettings): PartialPackage {
 	const patch: PartialPackage = {};
+	const fastPatch: Partial<FastModeSettings> = {};
 	if (before.fastMode.enabled !== after.fastMode.enabled) {
-		patch.fastMode = { enabled: after.fastMode.enabled };
+		fastPatch.enabled = after.fastMode.enabled;
 	}
+	if (before.fastMode.tier !== after.fastMode.tier) {
+		fastPatch.tier = after.fastMode.tier;
+	}
+	if (Object.keys(fastPatch).length > 0) patch.fastMode = fastPatch;
 
 	const compactionPatch: PartialCompaction = {};
 	for (const key of COMPACTION_FIELD_KEYS) {
@@ -650,27 +663,24 @@ export type SettingsWriteOptions = {
 };
 
 /**
- * Persist only the fast-mode field into user config.
+ * Persist only the selected speed mode into user config.
  * Does not seed compaction/tps from effective (possibly project) settings.
  */
 export async function updateFastModeSetting(
 	enabled: boolean,
 	cwd = process.cwd(),
-	options: SettingsWriteOptions = {},
+	options: SettingsWriteOptions & { tier?: FastServiceTier } = {},
 ): Promise<PackageSettings> {
 	const loaded = loadPackageSettings(cwd, {
 		isProjectTrusted: options.isProjectTrusted === true,
 	});
 	const path = agentSettingsPath();
 	const existing = readJsonObject(path, []) ?? {};
-	await writeJsonAtomic(
-		path,
-		applyPartialToExistingFile(existing, { fastMode: { enabled } }),
-		USER_FILE_WRITE,
-	);
+	const fastMode: FastModeSettings = { enabled, tier: options.tier ?? "priority" };
+	await writeJsonAtomic(path, applyPartialToExistingFile(existing, { fastMode }), USER_FILE_WRITE);
 	return {
 		...loaded.settings,
-		fastMode: { enabled },
+		fastMode,
 	};
 }
 

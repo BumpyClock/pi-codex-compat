@@ -1,14 +1,15 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { formatAuthPolicySetting, formatDirectOpenAIStatus } from "../auth-policy/messages.js";
-import type { FastModeController } from "../fast-mode/fast-mode.js";
+import type { ChangeSpeedMode, FastModeController } from "../fast-mode/fast-mode.js";
 import { updatePackageSettings } from "../settings/load.js";
-import type { PackageSettings } from "../settings/types.js";
+import type { PackageSettings, SpeedMode } from "../settings/types.js";
 import { guardObservableCommand, guardTuiOnlyMenu } from "../shared/mode.js";
 import { runUsageHistory } from "../usage-history/usage-history.js";
 
 export type CodexCommandDeps = {
 	getSettings: () => PackageSettings;
-	fastMode: FastModeController & { statusText?: () => string };
+	fastMode: FastModeController;
+	changeSpeedMode: ChangeSpeedMode;
 	openAccountsMenu: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	openQuotaMenu: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	refreshSettings?: (ctx?: ExtensionCommandContext) => PackageSettings;
@@ -27,6 +28,8 @@ const HELP_TEXT = [
 	"  /usage              Live Codex subscription quota (TUI)",
 	"  /usage-history      Historical Pi/Codex CLI cost report (TUI/RPC)",
 	"  /fast [toggle|on|off|status]  Priority service tier (TUI/RPC)",
+	"  /ultrafast [toggle|on|off|status]  Ultrafast tier; /utrafast alias (TUI/RPC)",
+	"    Requires gpt-6-astra or gpt-6.1-sol and account access. Higher cost.",
 	"  Alt+Shift+F         Toggle fast mode",
 	"",
 	"Settings:",
@@ -34,10 +37,11 @@ const HELP_TEXT = [
 	"    hide direct openai API-key models and block stale openai selections.",
 ].join("\n");
 
-function formatStatus(settings: PackageSettings, fastEnabled: boolean, authLine?: string): string {
+function formatStatus(settings: PackageSettings, speedMode: SpeedMode, authLine?: string): string {
 	return [
 		"pi-codex-compat status",
-		`  fast mode: ${fastEnabled ? "on" : "off"}`,
+		`  fast mode: ${speedMode === "fast" ? "on" : "off"}`,
+		`  ultrafast mode: ${speedMode === "ultrafast" ? "on" : "off"}`,
 		`  native compaction: ${settings.openaiNativeCompaction.enabled ? "enabled" : "disabled"}`,
 		`  tps: ${settings.tps.enabled ? "enabled" : "disabled"}`,
 		`  tps notify: ${settings.tps.notifyOnComplete ? "on" : "off"}`,
@@ -53,7 +57,10 @@ async function showFreshStatus(
 ): Promise<void> {
 	await deps.reconcileAuthPolicy?.(ctx);
 	ctx.ui.notify(
-		formatStatus(settings, deps.fastMode.isEnabled(), deps.getAuthPolicyStatusLine?.()),
+		[
+			formatStatus(settings, deps.fastMode.getMode(), deps.getAuthPolicyStatusLine?.()),
+			deps.fastMode.statusText(ctx.model),
+		].join("\n"),
 		"info",
 	);
 }
@@ -104,7 +111,8 @@ async function showCodexMenu(
 	const choice = await ctx.ui.select("Codex manager", [
 		"Accounts",
 		"Quota",
-		`Fast mode (${deps.fastMode.isEnabled() ? "on" : "off"})`,
+		`Fast mode (${deps.fastMode.getMode() === "fast" ? "on" : "off"})`,
+		`Ultrafast mode (${deps.fastMode.getMode() === "ultrafast" ? "on" : "off"})`,
 		"Historical usage",
 		"Settings",
 		"Status",
@@ -121,15 +129,14 @@ async function showCodexMenu(
 		return;
 	}
 	if (choice.startsWith("Fast mode")) {
-		const next = !deps.fastMode.isEnabled();
-		// Reuse /fast persistence path via settings helper and controller.
-		const { updateFastModeSetting } = await import("../settings/load.js");
-		await updateFastModeSetting(next, ctx.cwd, {
-			isProjectTrusted: ctx.isProjectTrusted(),
-		});
-		deps.fastMode.setEnabled(next);
-		deps.fastMode.updateStatus(ctx);
-		ctx.ui.notify(`OpenAI Codex fast mode is ${next ? "on" : "off"}.`, "info");
+		await deps.changeSpeedMode(ctx, deps.fastMode.getMode() === "fast" ? "standard" : "fast");
+		return;
+	}
+	if (choice.startsWith("Ultrafast mode")) {
+		await deps.changeSpeedMode(
+			ctx,
+			deps.fastMode.getMode() === "ultrafast" ? "standard" : "ultrafast",
+		);
 		return;
 	}
 	if (choice === "Historical usage") {

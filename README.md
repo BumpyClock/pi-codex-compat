@@ -3,6 +3,7 @@
 One Pi extension that consolidates OpenAI/Codex-focused behavior:
 
 - `/fast` priority service tier (`service_tier: "priority"`) for verified OpenAI Codex Responses requests
+- Optional `/ultrafast` service tier for supported OpenAI/Codex models (`/utrafast` alias), off by default
 - OpenAI native compaction replay for `openai` and `openai-codex` Responses APIs
 - Named OpenAI Codex OAuth accounts (`/accounts`)
 - Live Codex subscription quota (`/usage`)
@@ -42,13 +43,14 @@ Disable or remove those local/extension copies before enabling this package.
 
 | Command | Modes | Behavior |
 | --- | --- | --- |
-| `/codex` | TUI menu | Accounts, Quota, Fast mode, Historical usage, Settings, Status, Help |
+| `/codex` | TUI menu | Accounts, Quota, Fast mode, Ultrafast mode, Historical usage, Settings, Status, Help |
 | `/codex status` | TUI, RPC | Feature status |
 | `/codex help` | TUI, RPC | Help text |
 | `/accounts` | TUI | Named Codex OAuth account manager |
 | `/usage` | TUI | Live Codex subscription quota |
 | `/usage-history` | TUI, RPC | Agent-driven historical cost report |
 | `/fast [toggle\|on\|off\|status]` | TUI, RPC | Priority tier toggle |
+| `/ultrafast [toggle\|on\|off\|status]` | TUI, RPC | Opt-in Ultrafast tier toggle; `/utrafast` alias |
 | `Alt+Shift+F` | TUI | Toggle fast mode |
 
 Print and JSON modes throw a clear unsupported-mode error for these commands because Pi 0.82.1 has no observable extension-command output channel there. RPC receives a notification for TUI-only menus.
@@ -77,7 +79,7 @@ Example:
 
 ```json
 {
-  "fastMode": { "enabled": false },
+  "fastMode": { "enabled": false, "tier": "priority" },
   "openaiNativeCompaction": {
     "enabled": true,
     "debug": false,
@@ -94,6 +96,30 @@ Example:
   }
 }
 ```
+
+### Ultrafast mode
+
+Select `gpt-6-astra` or `gpt-6.1-sol`, then run `/ultrafast on` (or `/utrafast on`). Run `/ultrafast off` to disable it, or `/ultrafast status` to inspect the selected mode. Commands and the `/codex` menu share validation, persistence, and cost warnings.
+
+Ultrafast injects `service_tier: "ultrafast"` only for these exact model IDs on `openai` / `openai-responses` or `openai-codex` / `openai-codex-responses`. Other providers, APIs, and models are unchanged. Unsupported selections cannot enable Ultrafast. Switching to an unsupported model after enabling it leaves the preference saved, but marks Ultrafast inactive in status and leaves requests unchanged. Returning to a supported model resumes Ultrafast requests.
+
+Speed modes are mutually exclusive. `/fast on` replaces Ultrafast with priority mode; `/ultrafast on` replaces priority mode. Each command's `off` disables only its own mode. `Alt+Shift+F` continues to toggle priority mode, replacing Ultrafast when pressed. Neither mode changes reasoning effort, selects a different model, switches accounts, or falls back to API-key billing.
+
+Settings stay backward compatible. Existing `fastMode.enabled` values retain their meaning, and an absent `tier` defaults to `"priority"`. Enabling Ultrafast saves `"fastMode": { "enabled": true, "tier": "ultrafast" }` in the canonical user file. `enabled: false` disables both tiers. Recognized fields inherit through the existing trusted-project precedence rules. Explicit `on` and `off` selections persist even when trusted project settings already make the effective mode match. Turning off the other active tier is a no-op. Commands change the current session immediately after a successful user-setting write; trusted project overrides can take effect again on a settings reload or new session.
+
+**Eligibility and cost.** OpenAI currently lists GPT-6 Astra and GPT-6.1 Sol Ultrafast for Pro $500 and eligible Enterprise/Edu workspaces when signed in through ChatGPT. Plus, Pro $100, Pro $200, and Business do not include it at launch, even with purchased credits. Pro $500 consumes included allowance at 8x Standard, then purchased credits at 6x Standard. Enterprise/Edu billing follows the workspace agreement. API-key access has separate Ultrafast pricing and rate limits. These are usage multipliers, not speed guarantees.
+
+Pi 0.82.1 does not apply an Ultrafast service-tier cost multiplier. Pi cost estimates and historical reports can understate charges. Use OpenAI usage/billing for actual cost.
+
+This extension requests a tier; it does not grant plan access or verify entitlement from plan-name strings. Provider access/rate-limit errors remain visible through Pi, with no automatic tier or authentication fallback. A successful command means the preference was saved, not that OpenAI accepted an Ultrafast request.
+
+OpenAI supports HTTP and recommends persistent WebSockets for tool-heavy agents. No transport change is required to request the tier. Live acceptance and latency with an eligible Codex OAuth account have not been verified here.
+
+Official references:
+
+- [Ultrafast API guide](https://developers.openai.com/api/docs/guides/ultrafast-mode).
+- [ChatGPT Work and Codex eligibility and usage](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex).
+- [Fast mode and Ultrafast FAQ](https://help.openai.com/en/articles/11647665-fast-mode-faq).
 
 ### Auth cost-safety policy
 

@@ -8,8 +8,12 @@ export const LEGACY_FAST_MODE_KEY = "openaiCodexFastMode";
 export const LEGACY_COMPACTION_KEY = "openaiNativeCompaction";
 export const COMPACTION_ENV_PREFIX = "PI_OPENAI_NATIVE_COMPACTION_";
 
+export type SpeedMode = "standard" | "fast" | "ultrafast";
+export type FastServiceTier = "priority" | "ultrafast";
+
 export type FastModeSettings = {
 	enabled: boolean;
+	tier?: FastServiceTier;
 };
 
 export type TpsSettings = {
@@ -40,6 +44,7 @@ export type LoadedPackageSettings = {
 
 export const DEFAULT_FAST_MODE: FastModeSettings = {
 	enabled: false,
+	tier: "priority",
 };
 
 export const DEFAULT_TPS: TpsSettings = {

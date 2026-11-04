@@ -9,7 +9,11 @@ import type { CodexAuthStateReader } from "./accounts/codex-auth-state.js";
 import { type AuthPolicyController, registerAuthPolicy } from "./auth-policy/controller.js";
 import { registerCodexCommand } from "./commands/codex.js";
 import { type CompactionController, registerCompaction } from "./compaction/register.js";
-import { createFastModeController, registerFastMode } from "./fast-mode/fast-mode.js";
+import {
+	createFastModeController,
+	registerFastMode,
+	speedModeFromSettings,
+} from "./fast-mode/fast-mode.js";
 import usageExtension from "./quota/usage.js";
 import { loadPackageSettings, persistCanonicalMigrations } from "./settings/load.js";
 import type { PackageSettings } from "./settings/types.js";
@@ -28,7 +32,7 @@ export type PiCodexCompatDependencies = {
 
 /**
  * Single factory owning all registrations.
- * before_provider_request pipeline: native compaction replay first, then priority-tier injection.
+ * before_provider_request pipeline: native compaction replay first, then selected service-tier injection.
  *
  * Lifecycle order:
  * 1. session_start settings load (registered first)
@@ -67,7 +71,7 @@ export default function piCodexCompat(
 				isProjectTrusted: ctx.isProjectTrusted(),
 			});
 			settings = next.settings;
-			fastMode.setEnabled(settings.fastMode.enabled);
+			fastMode.setMode(speedModeFromSettings(settings.fastMode));
 			compaction.setSettings(settings.openaiNativeCompaction);
 			tps.configure(settings.tps);
 			try {
@@ -123,11 +127,12 @@ export default function piCodexCompat(
 		registerCommand: true,
 	});
 
-	registerFastMode(pi, fastMode, { cwd });
+	const changeSpeedMode = registerFastMode(pi, fastMode, { cwd });
 	registerUsageHistory(pi);
 	registerCodexCommand(pi, {
 		getSettings: () => settings,
 		fastMode,
+		changeSpeedMode,
 		openAccountsMenu: accounts.openMenu,
 		openQuotaMenu: quota.openMenu,
 		getAuthPolicyStatusLine: () => authPolicy.getStatusLine(),
@@ -139,9 +144,10 @@ export default function piCodexCompat(
 				isProjectTrusted: ctx?.isProjectTrusted() === true,
 			});
 			settings = next.settings;
-			fastMode.setEnabled(settings.fastMode.enabled);
+			fastMode.setMode(speedModeFromSettings(settings.fastMode));
 			compaction.setSettings(settings.openaiNativeCompaction);
 			tps.configure(settings.tps);
+			if (ctx) fastMode.updateStatus(ctx);
 			return settings;
 		},
 		onSettingsChanged: async (ctx: ExtensionCommandContext) => {
@@ -158,7 +164,7 @@ export default function piCodexCompat(
 	pi.on(
 		"before_provider_request",
 		async (event: BeforeProviderRequestEvent, ctx: ExtensionContext) => {
-			// Deterministic pipeline: native replay first, then priority-tier injection.
+			// Deterministic pipeline: native replay first, then selected service-tier injection.
 			let payload: unknown = event.payload;
 			const rewritten = await compaction.rewriteProviderRequest({ ...event, payload }, ctx);
 			if (rewritten !== undefined) payload = rewritten;

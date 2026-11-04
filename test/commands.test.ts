@@ -28,7 +28,15 @@ function boot() {
 
 test("registers expected commands", () => {
 	const { commands } = boot();
-	for (const name of ["codex", "accounts", "usage", "usage-history", "fast"]) {
+	for (const name of [
+		"codex",
+		"accounts",
+		"usage",
+		"usage-history",
+		"fast",
+		"ultrafast",
+		"utrafast",
+	]) {
 		assert.ok(commands.has(name), `missing command ${name}`);
 	}
 });
